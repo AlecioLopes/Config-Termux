@@ -9,8 +9,29 @@ CYAN='\033[1;36m'
 NC='\033[0m' # No Color
 
 # Configurações
-REPO_URL="https://github.com/seu-usuario/seu-repositorio.git"
-INSTALL_DIR="$HOME/termux-setup"
+REPO_URL="https://github.com/AlecioLopes/Config-Termux.git"
+INSTALL_DIR="$HOME/termux-config"
+LOCK_FILE="$INSTALL_DIR/.install.lock"
+LOG_FILE="$INSTALL_DIR/install.log"
+SCRIPT_NAME="ConfigGeralTermux"
+
+# Função para registro de log
+log() {
+    echo -e "${YELLOW}[$(date '+%Y-%m-%d %H:%M:%S')] $1${NC}" | tee -a "$LOG_FILE"
+}
+
+# Função para verificar instalação prévia
+check_previous_install() {
+    if [ -f "$LOCK_FILE" ]; then
+        log "ℹ️  Configuração já foi executada anteriormente em: $(cat "$LOCK_FILE")"
+        read -p "Deseja executar novamente? (s/N) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Ss]$ ]]; then
+            log "✅ Execução cancelada pelo usuário"
+            exit 0
+        fi
+    fi
+}
 
 # Função para exibir cabeçalho
 header() {
@@ -21,57 +42,88 @@ header() {
     echo "  (Versão GitHub)                  "
     echo "===================================="
     echo -e "${NC}"
+    
+    # Criar diretório de instalação se não existir
+    mkdir -p "$INSTALL_DIR"
 }
 
 # Função para verificar e instalar dependências
 check_dependencies() {
-    echo -e "${YELLOW}[*] Verificando dependências...${NC}"
+    log "Verificando dependências..."
     
-    if ! command -v git &> /dev/null; then
-        echo -e "${BLUE}[-] Git não encontrado. Instalando...${NC}"
-        pkg install -y git
-    fi
+    local missing=0
+    local required=("git" "curl" "wget")
     
-    echo -e "${GREEN}[+] Dependências verificadas.${NC}"
-}
-
-# Função para clonar repositório
-clone_repo() {
-    echo -e "${YELLOW}[*] Clonando repositório...${NC}"
+    for pkg in "${required[@]}"; do
+        if ! command -v "$pkg" &> /dev/null; then
+            log "${BLUE}[-] $pkg não encontrado. Instalando...${NC}"
+            if ! pkg install -y "$pkg"; then
+                log "${RED}[!] Falha ao instalar $pkg${NC}"
+                missing=$((missing+1))
+            fi
+        fi
+    done
     
-    if [ -d "$INSTALL_DIR" ]; then
-        echo -e "${BLUE}[-] Diretório já existe. Atualizando...${NC}"
-        cd "$INSTALL_DIR" && git pull
-    else
-        git clone "$REPO_URL" "$INSTALL_DIR"
-    fi
-    
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}[!] Erro ao clonar/atualizar repositório.${NC}"
+    if [ $missing -gt 0 ]; then
+        log "${RED}[!] Falha ao instalar dependências necessárias${NC}"
         exit 1
     fi
     
-    echo -e "${GREEN}[+] Repositório clonado/atualizado com sucesso.${NC}"
+    log "${GREEN}[+] Dependências verificadas${NC}"
+}
+
+# Função para clonar/atualizar repositório
+clone_repo() {
+    log "Clonando/atualizando repositório..."
+    
+    if [ -d "$INSTALL_DIR/.git" ]; then
+        log "${BLUE}[-] Diretório já existe. Atualizando...${NC}"
+        if ! git -C "$INSTALL_DIR" pull; then
+            log "${RED}[!] Erro ao atualizar repositório${NC}"
+            exit 1
+        fi
+    else
+        if ! git clone "$REPO_URL" "$INSTALL_DIR"; then
+            log "${RED}[!] Erro ao clonar repositório${NC}"
+            exit 1
+        fi
+    fi
+    
+    log "${GREEN}[+] Repositório atualizado com sucesso${NC}"
+}
+
+# Função para executar scripts
+run_scripts() {
+    cd "$INSTALL_DIR" || {
+        log "${RED}[!] Falha ao acessar diretório de instalação${NC}"
+        exit 1
+    }
+    
+    local main_script="ConfigGeralTermux"
+    
+    if [ -f "$main_script" ]; then
+        log "Executando script principal..."
+        chmod +x "$main_script"
+        if ! ./"$main_script"; then
+            log "${RED}[!] Erro durante execução do script principal${NC}"
+            exit 1
+        fi
+    else
+        log "${RED}[!] Script principal não encontrado${NC}"
+        exit 1
+    fi
+    
+    # Marcar instalação como concluída
+    date > "$LOCK_FILE"
 }
 
 # Função principal
 main() {
     header
+    check_previous_install
     check_dependencies
     clone_repo
-    
-    # Executar scripts do repositório
-    cd "$INSTALL_DIR"
-    
-    # Verificar e executar o script principal
-    if [ -f "setup_termux.sh" ]; then
-        echo -e "${YELLOW}[*] Executando script principal...${NC}"
-        chmod +x setup_termux.sh
-        ./setup_termux.sh
-    else
-        echo -e "${RED}[!] Script principal não encontrado no repositório.${NC}"
-        exit 1
-    fi
+    run_scripts
     
     echo -e "${GREEN}"
     echo "===================================="
@@ -79,8 +131,10 @@ main() {
     echo "===================================="
     echo -e "${NC}"
     
+    log "✅ Instalação concluída com sucesso"
     echo -e "${YELLOW}[!] Recomenda-se reiniciar o Termux para aplicar todas as alterações.${NC}"
+    echo -e "${BLUE}Log completo disponível em: $LOG_FILE${NC}"
 }
 
 # Executar função principal
-main
+main "$@"
